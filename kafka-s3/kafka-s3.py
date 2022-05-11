@@ -8,14 +8,7 @@ import pyarrow.parquet as pq
 import pyarrow.dataset as ds
 from pyarrow import json, fs
 
-from bytewax.io import S3, Kafka
-
 BUCKET_NAME = os.getenv("BUCKET_NAME")
-
-# class KafkaReader:
-#     def __init__(self):
-#         self.topics = os.getenv(TOPICS)
-#         self.server = os.getenv(BOOTSTRAP_SERVERS)
 
 def kafka_input(topic, server, timeout=1.0):
     consumer = Consumer({
