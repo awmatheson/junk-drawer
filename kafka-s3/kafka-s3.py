@@ -77,6 +77,5 @@ flow.map(convert_to_arrow)
 flow.capture()
 
 if __name__ == "__main__":
-
-    kafka = Kafka(input_helper = 'fully_ordered')
+    
     spawn_cluster(flow, input_builder, output_builder, **parse.cluster_args())
