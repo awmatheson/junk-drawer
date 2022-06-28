@@ -1,12 +1,8 @@
-import time 
 import math
 import collections
 
 import pyshark
 from bytewax import Dataflow, parse, spawn_cluster, AdvanceTo, Emit
-
-def log2(p):
-    return math.log(p, 2) if p > 0 else 0 
 
 def input_builder(worker_index, worker_count):
     # Since our input is not parallelizable, we open a live capture only
@@ -19,6 +15,11 @@ def input_builder(worker_index, worker_count):
             epoch += 1
             yield AdvanceTo(epoch)
 
+
+def log2(p):
+    return math.log(p, 2) if p > 0 else 0 
+
+
 def group_by_flow(packet):
     '''packet flow in pyshark is shown as
     the TCP stream'''
@@ -27,14 +28,14 @@ def group_by_flow(packet):
 
     return (packet[protocol].stream, (packet))
 
-class Packet:
+
+class Packets:
 
     def __init__(self):
-        self.avg_bytes = 0
-        self.sum_bytes = 0
         self.count_seen_packets = 0
         self.packet_counts_ = collections.defaultdict(int)
         self.entropy = 0
+
 
     def update(self, packet):
         self.protocol = packet.transport_layer   # protocol type
@@ -42,7 +43,6 @@ class Packet:
         self.src_port = packet[self.protocol].srcport   # source port
         self.dst_addr = packet.ip.dst            # destination address
         self.dst_port = packet[self.protocol].dstport   # destination port
-        self.sum_bytes += int(packet.length)   # total bytes in the flow
         self.packet_bytes = int(packet.length)   # bytes in the current packet
 
         # calculate entropy of packet size
@@ -51,9 +51,9 @@ class Packet:
         # update packet details
         self.count_seen_packets += 1
         self.packet_counts_[self.packet_bytes] += 1
-        self.avg_length = self.sum_bytes/self.count_seen_packets
 
-        return self, ((self.src_addr, self.src_port, self.dst_addr, self.dst_port), self.count_seen_packets, self.entropy, self.avg_length)
+        return self, ((self.src_addr, self.src_port, self.dst_addr, self.dst_port), self.count_seen_packets, self.entropy)
+
 
     def _calc_entropy(self, size_bytes, r):
         '''Modified entropy calculation for estimating the incremental
@@ -69,18 +69,21 @@ class Packet:
 
         return self.entropy
 
+
 def alert_low_entropy(packet_data):
     flow_number, data = packet_data
-    flow_details, num_packets, entropy, avg_length = data
+    flow_details, num_packets, entropy = data
     return entropy < 0.5 and num_packets > 4
+
 
 def output_builder(worker_index, worker_count):
     return print
 
+
 flow = Dataflow()
 flow.map(group_by_flow)
 #(flow_number, packet_data)
-flow.stateful_map(lambda key: Packet(), Packet.update)
+flow.stateful_map(lambda key: Packets(), Packets.update)
 flow.inspect(print)
 flow.filter(alert_low_entropy)
 flow.capture()
