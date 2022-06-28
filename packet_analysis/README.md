@@ -1,9 +1,5 @@
----
-title: Protecting Against Cyberattacks with Bytewax and Pyshark
-featured-image: assets/img/blog/coinbase.png
-featured-image-alt: Coinbase and Crypto Kitties
-author: zander
----
+# Protecting Against Cyberattacks with Bytewax and Pyshark
+
 
 Every year, cyberattacks become more and more commonplace. Almost daily there are reports of ongoing cyberattacks causing information destruction, service disruption or data theft. With headlines like, "[Russian group claims hack of Lithuanian sites in retaliation for transit ban](https://www.reuters.com/technology/lithuania-hit-by-cyber-attack-government-agency-2022-06-27/)", "[Cyberattack forces Iran steel company to halt production(https://abcnews.go.com/International/wireStory/cyberattack-forces-iran-steel-company-halt-production-85773314)" or "[General Motors Hacked In Cyberattack, Personal Data Exposed](https://www.motor1.com/news/588646/general-motors-hacked-cyberattack/)". One of the most damaging types of cyberattacks is the command-and-control attack, which can be devastating to the targeted organization. In a command-and-control attack, an attacker will first attempt to infect a machine in the organization's network via phishing, browser plugins or other infected software. Once infected the machine will open communication with the attackers machine and the infected machine can be controlled remotely. This can be devastating, with the attackers stealing data, shutting down machines or overwhelming the network with DDoS attacks.
 
