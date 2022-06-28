@@ -5,9 +5,9 @@ featured-image-alt: Coinbase and Crypto Kitties
 author: zander
 ---
 
-Every year, cyberattacks become more and more commonplace. Almost daily there are reports of ongoing cyberattacks causing information destruction, service disruption or data theft. With headlines like, "[Russian group claims hack of Lithuanian sites in retaliation for transit ban](https://www.reuters.com/technology/lithuania-hit-by-cyber-attack-government-agency-2022-06-27/)", "[Cyberattack forces Iran steel company to halt production(https://abcnews.go.com/International/wireStory/cyberattack-forces-iran-steel-company-halt-production-85773314)" or "[General Motors Hacked In Cyberattack, Personal Data Exposed](https://www.motor1.com/news/588646/general-motors-hacked-cyberattack/)". One of the most damaging types of cyberattacks is the command-and-control attack, which can be devestating to the targeted organization. In a command-and-control attack, an attacker will first attempt to infect a machine in the organizations network via phishing, browser plugins or other infected software. Once infected the machine will open communication with the attackers machine and the infected machine can be controlled remotely. This can be devastating, with the attackers stealing data, shutting down machines or overwhelming the network with DDoS attack.
+Every year, cyberattacks become more and more commonplace. Almost daily there are reports of ongoing cyberattacks causing information destruction, service disruption or data theft. With headlines like, "[Russian group claims hack of Lithuanian sites in retaliation for transit ban](https://www.reuters.com/technology/lithuania-hit-by-cyber-attack-government-agency-2022-06-27/)", "[Cyberattack forces Iran steel company to halt production(https://abcnews.go.com/International/wireStory/cyberattack-forces-iran-steel-company-halt-production-85773314)" or "[General Motors Hacked In Cyberattack, Personal Data Exposed](https://www.motor1.com/news/588646/general-motors-hacked-cyberattack/)". One of the most damaging types of cyberattacks is the command-and-control attack, which can be devastating to the targeted organization. In a command-and-control attack, an attacker will first attempt to infect a machine in the organization's network via phishing, browser plugins or other infected software. Once infected the machine will open communication with the attackers machine and the infected machine can be controlled remotely. This can be devastating, with the attackers stealing data, shutting down machines or overwhelming the network with DDoS attacks.
 
-In this post we are going to look at how we can detect for suspicious activity on a network that could be a command-and-control style attack. We will use the common network analysis tool wireshark to sniff network packets and then Bytewax to process the flow of packets and analyze the flows for their entropy.
+In this post we are going to look at how we can detect suspicious activity on a network that could be a command-and-control style attack. We will use the common network analysis tool wireshark to sniff network packets and then Bytewax to process the flow of packets and analyze the flows for their entropy.
 __This is a very rudimentary analysis and could be fooled by an attacker, please consult a professional for your security needs__
 
 We are going to write a Bytewax dataflow that will:
@@ -137,7 +137,7 @@ First, lets go over the dataflow line:
 flow.stateful_map(lambda key: Packets(), Packets.update)
 ```
 
-Here we are adding the `stateful_map` operator to our dataflow as the step after we modified our data in the previous step. Stateful map is a one-to-one transformation of values in (key, value) pairs, but allows you to reference a persistent state for each key when doing the transformation. The operator calls two functions, a builder and a mapper. The builder function returns new state for each key. In our case this is a new `Packets` object for each TCP flow id. The mapper transforms the values passed in. In this case it is the Packets.update call.
+Here we are adding the `stateful_map` operator to our dataflow as the step after we modified our data in the previous step. Stateful map is a one-to-one transformation of values in (key, value) pairs, but allows you to reference a persistent state for each key when doing the transformation. The operator calls two functions, a builder and a mapper. The builder function returns a new state for each key. In our case this is a new `Packets` object for each TCP flow id. The mapper transforms the values passed in. In this case it is the Packets.update call.
 
 For every time we first see a new flow id (combination of source and destination ip addresses and ports) we will instantiate a new Packets object.
 
@@ -205,7 +205,7 @@ def output_builder(worker_index, worker_count):
     return print
 ```
 
-The capture operator is how you specify output of a dataflow. Whenever an item flows into a capture operator, the output handler of the worker is called with that item and epoch. In this case we are just printing out the suspect flow details. 
+The capture operator is how you specify output of a dataflow. Whenever an item flows into a capture operator, the output handler of the worker is called with that item and epoch. In this case we are just printing out the suspect flow details.
 
 ### Running the Dataflow
 
