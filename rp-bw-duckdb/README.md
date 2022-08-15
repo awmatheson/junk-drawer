@@ -9,11 +9,11 @@ Most often, the raison d'etre of a data team is to facilitate answers to questio
 
 What I am going to show in this tutorial is how you can set up a relatively lightweight data stack that will serve in providing answers to who is using our product and how are they using it. The architecture and solution is a departure from the often talked about modern data stack, which often ends up being expensive, 100% hosted and possibly a lot more than you need. This Data Stack can run on any cloud, could scale with your business and provide all the capabilities you require, this ain't no toy data stack. But... it also might lack some of the frills of the often touted modern data stack.
 
-![diagram showing architecture](img/lds_arch.png)
+This iteration of the lightweight data stack as is summarized in the diagram below uses [Redpanda](https://redpanda.com/), [Bytewax](https://www.bytewax.io/) and [DuckDB](https://duckdb.org/). Redpanda serves as the streaming platform, Bytewax as the processing substrate for EL and some T and then duckDB as a serverless query engine for exploration.
 
 ---------
 
-For this tutorial we are using some logs sourced from Kaggle and we have sampled the first 1000. You can find the full log file [here](https://www.kaggle.com/datasets/eliasdabbas/web-server-access-logs?resource=download). To start we are going to run a Redpanda cluster, create a topic and load it with logs and then write a dataflow that will parse the logs and store them in s3 (we will actually mock this part with local storage instead). Then we will show you how you can use duckDB to query them.
+For this tutorial we are using web server access logs sourced from Kaggle and we have sampled the first 1000. You can find the full log file [here](https://www.kaggle.com/datasets/eliasdabbas/web-server-access-logs?resource=download). To start, we are going to run a Redpanda cluster, create a topic and load it with the log data. Then, we will write a dataflow that will parse the logs and store them in s3 (we will actually mock this part with local storage instead). Then we will show you how you can use duckDB to query them.
 
 ## Redpanda
 
@@ -40,7 +40,6 @@ Now that we have our streaming platform set up, let's create a new topic and sim
 ```python
 pip install -r requirements.txt
 ```
-
 
 ```python
 from kafka import KafkaProducer
