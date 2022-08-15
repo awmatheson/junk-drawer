@@ -1,20 +1,17 @@
 # The Lightweight Data Stack 
 ## Redpanda + Bytewax + DuckDB
 
---------
-
 Back when I worked at GitHub, we pulled many of our metrics out of a data source we called requests. This was an accumulation of all (or nearly all) of the HTTP requests across the GitHub products. The data originated from logs generated from web servers or in some cases from a load balancer. This data allowed us to determine things like who is using which parts of the product and how they are using the product. It turns out this is a more common source of data than just GitHub. Companies often lack perfect telemetry for their products and in order to get information on what is happening, we can look to the server log data.
 
-Most often, the raison d'etre of a data team is to facilitate answers to questions like we had at GitHub. Who is using the product and how are they using it. The root capability required to answer question like we at GitHub had, is the ability to count things reliably and at scale. 
+Most often, the raison d'etre of a data team is to facilitate answers to questions like we had at GitHub. Who is using the product and how are they using it. The root capability required to answer question like we at GitHub had, is the ability to count things reliably and at scale.
 
 ![quote: the ability to count things reliably and at scale](img/quote.png)
 
 What I am going to show in this tutorial is how you can set up a relatively lightweight data stack that will serve in providing answers to who is using our product and how are they using it. The architecture and solution is a departure from the often talked about modern data stack, which often ends up being expensive, 100% hosted and possibly a lot more than you need. This Data Stack can run on any cloud, could scale with your business and provide all the capabilities you require, this ain't no toy data stack. But... it also might lack some of the frills of the often touted modern data stack.
 
---------
-
-**Lightweight Data Stack**
 ![diagram showing architecture](img/lds_arch.png)
+
+---------
 
 For this tutorial we are using some logs sourced from Kaggle and we have sampled the first 1000. You can find the full log file [here](https://www.kaggle.com/datasets/eliasdabbas/web-server-access-logs?resource=download). To start we are going to run a Redpanda cluster, create a topic and load it with logs and then write a dataflow that will parse the logs and store them in s3 (we will actually mock this part with local storage instead). Then we will show you how you can use duckDB to query them.
 
