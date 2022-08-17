@@ -1,4 +1,4 @@
-# Using Webserver Logs to Answer Product and Business Questions 
+# Using Web Server Logs to Answer Product and Business Questions 
 ## Redpanda + Bytewax + DuckDB
 
 Back when I worked at GitHub, we pulled many of our metrics out of a data source we called requests. This was an accumulation of all (or nearly all) of the HTTP requests across the GitHub products. The data originated from logs generated from web servers or in some cases from a load balancer. This data allowed us to determine things like who is using which parts of the product and how they are using the product. It turns out this is a more common source of data than just GitHub. Companies often lack perfect telemetry for their products and in order to get information on what is happening, we can look to the server log data.
