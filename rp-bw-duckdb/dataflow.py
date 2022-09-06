@@ -4,13 +4,20 @@ import datetime
 import uuid
 import requests
 
-from bytewax import Dataflow, cluster_main
+from bytewax.dataflow import Dataflow
 from bytewax.inputs import KafkaInputConfig
-from bytewax.recovery import KafkaRecoveryConfig
+from bytewax.outputs import ManualOutputConfig
+from bytewax.execution import cluster_main
+from bytewax.window import TumblingWindowConfig, SystemClockConfig
 
 import pyarrow.dataset as ds
 from pyarrow import csv, fs
 
+
+# Get ENV variables
+ROOT_FOLDER = os.getenv("ROOT_FOLDER", "data")
+KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "localhost:9092")
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "requests")
 
 def modify_key(data):
     key, log = data
@@ -25,7 +32,10 @@ def enrichment(data):
       - reformats log string to include country, region and city
     '''
     key, log = data
-    log = log.decode().replace('[','"').replace(']','"') # to parse datetime
+    log = log.decode()
+    log = log.replace("|", "%7C") # fix requests using forbidden chars that aren't encoded
+    # modify quote character to pipe to overcome quote character in logs
+    log = log.replace(" ["," |").replace("] ","| ").replace(' "', ' |').replace('" ', '| ')[:-2] + '|' # to parse datetime
     ip_address = log.split()[0]
     response = requests.get(f'https://ipapi.co/{ip_address}/json/')
     response_json = response.json()
@@ -33,12 +43,17 @@ def enrichment(data):
         city, region, country = "-", "-", "-"
     else:
         city, region, country = response_json.get("city"), response_json.get("region"), response_json.get("country_name")
-    location_data = '"' + '" "'.join([city, region, country]) + '"'
+    location_data = '|' + '| |'.join([city, region, country]) + '|'
     return (key, b" ".join([location_data.encode(), log.encode()]))
     
 
 def accumulate_logs(logs, log):
     return logs + '\n'.encode() + log
+
+
+def skip_log(log):
+    print(str(log))
+    return("skip")
 
 
 def parse_logs(epoch__logs):
@@ -48,7 +63,7 @@ def parse_logs(epoch__logs):
     '''
     epoch, logs = epoch__logs
     logs = BytesIO(logs)
-    parse_options = csv.ParseOptions(delimiter=" ")
+    parse_options = csv.ParseOptions(delimiter=" ", invalid_row_handler=skip_log, quote_char="|")
     read_options = csv.ReadOptions(
         column_names=["city", "region", "country", "ip", "1-", "2-", "event_time", "request_url",
         "status_code", "3-", "request_referrer", "user_agent", "4-"])
@@ -61,12 +76,15 @@ def parse_logs(epoch__logs):
     return table
 
 
-def write_to_fs(epoch__table):
+def output_builder(worker_index, worker_count):
+    return write_to_fs
+
+
+def write_to_fs(table):
     '''
-    create a filesystem object with pyarro fs
+    create a filesystem object with pyarrow fs
     write pyarrow table as parquet to filesystem
     '''
-    epoch, table = epoch__table
     local = fs.LocalFileSystem()
     ds.write_dataset(
         table,
@@ -78,30 +96,21 @@ def write_to_fs(epoch__table):
         basename_template = "part-{i}-" + uuid.uuid4().hex + ".parquet"
     )
 
-
-def output_builder(worker_index, worker_count):
-    return write_to_fs
+cc = SystemClockConfig()
+wc = TumblingWindowConfig(length=datetime.timedelta(seconds=5))
+kafka_input = KafkaInputConfig(
+        brokers=[KAFKA_BROKERS],
+        topic=KAFKA_TOPIC,
+        tail=False
+    )
 
 flow = Dataflow()
+flow.input("inp", kafka_input)
 flow.map(modify_key)
 flow.map(enrichment)
-flow.reduce_epoch(accumulate_logs)
+flow.reduce_window("accumulate_logs", cc, wc, accumulate_logs)
 flow.map(parse_logs)
-flow.inspect(print)
-flow.capture()
-
-ROOT_FOLDER = os.getenv("ROOT_FOLDER", "data")
-KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "localhost:9092")
-KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "server_request_logs")
-KAFKA_TOPIC_GROUP_ID = os.getenv("KAFKA_TOPIC_GROUP_ID", "group_id")
-KAFKA_TOPIC_GROUP_ID = os.getenv("RECOVERY_TOPIC", "group_id")
+flow.capture(ManualOutputConfig(output_builder))
 
 if __name__ == "__main__":
-    input_config = KafkaInputConfig(
-        KAFKA_BROKERS, KAFKA_TOPIC_GROUP_ID, KAFKA_TOPIC, messages_per_epoch=100
-    )
-    # recovery_config = KafkaRecoveryConfig(
-    # KAFKA_BROKERS,
-    # "requests",
-    # )
-    cluster_main(flow, input_config, output_builder, [], 0)
+    cluster_main(flow, [], 0)

@@ -35,47 +35,7 @@ redpanda start \
 --check=false
 ```
 
-Now that we have our streaming platform set up, let's create a new topic and simulate logging some data for downstream consumption. If you've cloned this notebook locally, you can run the cell below directly from the notebook. Before doing so, you may need to install the correct requirements from `requirements.txt` with the command below.
-
-```python
-pip install -r requirements.txt
-```
-
-
-```python
-from kafka import KafkaProducer
-from kafka.admin import KafkaAdminClient, NewTopic
-from kafka.errors import KafkaError
-from time import sleep
-
-input_topic_name = "server_request_logs"
-localhost_bootstrap_server = "localhost:9092"
-producer = KafkaProducer(bootstrap_servers=[localhost_bootstrap_server])
-admin = KafkaAdminClient(bootstrap_servers=[localhost_bootstrap_server])
-
-# Create input topic
-try:
-    input_topic = NewTopic(input_topic_name, num_partitions=6, replication_factor=1)
-    admin.create_topics([input_topic])
-    print(f"input topic {input_topic_name} created successfully")
-except:
-    print(f"Topic {input_topic_name} already exists")
-
-# Add data to input topic
-try:
-    for line in open("input_data/first1000.log"):
-        producer.send(input_topic_name, value=line.encode())
-        sleep(0.01)
-    print(f"input topic {input_topic_name} populated successfully")
-except KafkaError:
-    print("An error occurred")
-```
-
-    input topic server_request_logs created successfully
-    input topic server_request_logs populated successfully
-
-
-Let's take a quick look at what the server logs look like before diving into the dataflow code below.
+Now that we have our streaming platform set up, let's take a quick look at what the server logs look like before diving into the dataflow code below. 
 
 
 ```python
@@ -95,19 +55,13 @@ Let's take a quick look at what the server logs look like before diving into the
     40.77.167.129 - - [22/Jan/2019:03:56:18 +0330] "GET /image/57710/productModel/100x100 HTTP/1.1" 200 1695 "-" "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)" "-"
 
 
-These look pretty standard. We have the IP address, the GET request, referrer, user agent, status code and more. We can probably get some pretty interesting answers from this data like where requests are made from and by who. In the dataflow we will seek to convert these log lines into something useable. 
+These look pretty standard. We have the IP address, the GET request, referrer, user agent, status code and more. We can probably get some pretty interesting answers from this data like where requests are made from and by who. In the dataflow we will seek to convert these log lines into something useable.
 
-With the logs loaded into a Redpanda topic, we are going to create an ingestion pipeline that uses Bytewax. The Bytewax dataflow python file is located in the repository and we will walk through it in this notebook. To run the dataflow before reading through the tutorial, simply run 
-
-```bash
-$ python dataflow.py
-```
-
-`dataflow.py` will take the raw logs as an input from Redpanda, enrich them, parse them, and then write them to a file store in a columnar format (parquet). We are doing some minor enrichment directly in the dataflow, this may be prohibitive depending on your scale and requirements.
+Our dataflow will take the raw logs as an input from Redpanda, enrich them, parse them, and then write them to a file store in a columnar format (parquet). We are doing some minor enrichment directly in the dataflow, in practice, this may be prohibitive depending on your scale and requirements.
 
 _If you are doing ip <-> geolocation enrichment as we are in this tutorial, I would recommend using the python package geoip2 with a database to decrease the latency._
 
-Let's walk through the dataflow.
+Let's walk through the dataflow. If you are following along, the code for the dataflow explained below is in the main [GitHub repo](https://github.com/awmatheson/junk-drawer/tree/main/rp-bw-duckdb) as `dataflow.py`.
 
 ## Dataflow
 
@@ -123,66 +77,73 @@ The code to describe the dataflow is the following:
 
 ```python
 flow = Dataflow()
+flow.input("inp", kafka_input)
 flow.map(modify_key)
 flow.map(enrichment)
-flow.reduce_epoch(accumulate_logs)
+flow.reduce_window("accumulate_logs", cc, wc, accumulate_logs)
 flow.map(parse_logs)
-flow.capture()
+flow.inspect(print)
+flow.capture(ManualOutputConfig(output_builder))
 ```
 
 and to call the data flow we will run
 
 ```python
 if __name__ == "__main__":
-    spawn_cluster(flow, input_config, output_builder, recovery_config=recovery_config, proc_count=2)
+    cluster_main(flow, [], 0)
 ```
 
 
 ### Input - Ingesting and recovery from Kafka
 
-Bytewax has a handy Kafka input mechanism called `KafkaInputConfig` that keeps the necessary kafka consumer code to a minimum. There is also a recovery mechanism called `KafkaRecoveryConfig` that will use kafa API compatible services like Redpanda as the recovery store.
+You'll notice at the top of our flow above, we have `flow.input("inp", kafka_input)`. The [`dataflow.input()`](https://docs.bytewax.io/apidocs/bytewax.dataflow#bytewax.dataflow.Dataflow.input) method is what is used to set our input configurations. In our dataflow, kafka_input is a variable that represents a handy Bytewax Kafka input mechanism called `KafkaInputConfig` that handles the nitty gritty code for a kafka consumer. There is also a recovery mechanism called [`KafkaRecoveryConfig`](https://docs.bytewax.io/apidocs/bytewax.recovery) that will use kafa API compatible services like Redpanda as the recovery store so in the case that our dataflow fails, we will resume from the latest offset with the state recovered. We won't use recovery in this particular example.
 
 ```python
-input_config = KafkaInputConfig(
-        RP_BROKERS, RP_TOPIC_GROUP_ID, RP_TOPIC, messages_per_epoch=100
-    )
-    recovery_config = KafkaRecoveryConfig(
-    RP_BROKERS,
-    "requests",
+kafka_input = KafkaInputConfig(
+        brokers=[KAFKA_BROKERS],
+        topic=KAFKA_TOPIC,
+        tail=False
     )
 ```
 
-These configurations will be used in the command to build a cluster of Bytewax dataflow workers in the main function. So the whole code in main will look like:  
+The variables used in the configuration were set as environment variables in the dataflow as below.
 
 ```python
-if __name__ == "__main__":
-    input_config = KafkaInputConfig(
-        RP_BROKERS, RP_TOPIC_GROUP_ID, RP_TOPIC, messages_per_epoch=100
-    )
-    recovery_config = KafkaRecoveryConfig(
-    RP_BROKERS,
-    "requests",
-    )
-    cluster_main(flow, input_config, output_builder, [], 0)
+KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "localhost:9092")
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "requests")
 ```
 
-In the case if our dataflow infra fails, our dataflow will recover its state from the recovery store we have configured. In this example, we are starting with only a single process and a single worker. If we had multiple partitions, we would modify these to increase the throughput. 
+The variables available to the KafkaInputConfig can be seen in detail in [the documentation](https://docs.bytewax.io/apidocs/bytewax.inputs#bytewax.inputs.KafkaInputConfig). We are listening on the requests topic, with our offset starting at the earliest available and we will not tail the data, we will exit upon completion. In 0.12.0 and above you can also specify additional configuration parameters that will match those in librdkafka, the client used underneath.
+
+
+With our input configured, we can write the rest of the dataflow.
 
 ### Parsing & Enrichment - Turning Logs into Data
 
 For the bulk of the dataflow we are going to:
-1. `modify_key` - this will modify the initial payload for aggregation. Nothing much going on here for this example.
-2. `enrichment`
-  a. Reformat the log string to more easily parse the date string
-  b. Get the IP address from the log string and make a request to ipapi for the geolocation
-3. `accumulate_logs` - Accumulating a batch of logs
+1. `modify_key` - Modify the initial payload for aggregation. Nothing much going on here for this example.
+2. `enrichment`<br>
+  a. Reformat the log string to more easily parse them including malformated requests, additional quote characters and date strings.<br>
+  b. Get the IP address from the log string and make a request to ipapi for the geolocation.
+  
+3. `accumulate_logs` - Accumulate a batch of logs
 4. `parse_logs` - Parse the logs into a columnar table format for writing
 
-Since we are using a single partition and we are not concerned with parallelization in this example, we will ignore the `modify_key` step. The explanation for this step is that when we accumulate data, we would do it on a key and this first step would be used to pull out the key and put it as the first item in a tuple format for the accumulate step. 
+Since we are using a single worker and we are not concerned with parallelization in this example, we will ignore the `modify_key` step. The explanation for this step is that when we accumulate data, we would do it on a key and this first step would be used to pull out the key and put it as the first item in a tuple format for the accumulate step. 
 
 _Our logs are byte strings and we will keep them in that format until we parse them. This will allow us to leverage pyarrow's csv_reader which will limit the need for us to write any funky regex._
 
-#### Part 1 - IP <-> Geolocation
+#### Part 1 - Modify Key
+
+As mentioned, we won't be doing much here since we are not concerned with parallelization. We are simply reformatting our payload to be in the correct format for the downstream stateful operator, `reduce_window`.
+
+```python
+def modify_key(data):
+    key, log = data
+    return ('', log)
+```
+
+#### Part 2 - IP <-> Geolocation
 
 We are using a free service called ipapi that will return a geolocation from an ip for free. This requires us to make a http request and I would not recommend this for your production service because of latency and an increased chance of errors, but rather it would be better to use a ip <-> geolocation database service like [max mind](https://github.com/maxmind/GeoIP2-python). 
 
@@ -190,8 +151,17 @@ In the code below, we are also doing a touch of formatting that will allow us to
 
 ```python
 def enrichment(data):
+    '''
+    Function that:
+      - modifies the log string for datetime parsing
+      - makes an ip lookup from ipapi
+      - reformats log string to include country, region and city
+    '''
     key, log = data
-    log = log.decode().replace('[','"').replace(']','"') # to parse datetime
+    log = log.decode()
+    log = log.replace("|", "%7C") # fix requests using forbidden chars that aren't encoded
+    # modify quote character to pipe to overcome quote character in logs
+    log = log.replace(" ["," |").replace("] ","| ").replace(' "', ' |').replace('" ', '| ')[:-2] + '|' # to parse datetime
     ip_address = log.split()[0]
     response = requests.get(f'https://ipapi.co/{ip_address}/json/')
     response_json = response.json()
@@ -199,13 +169,22 @@ def enrichment(data):
         city, region, country = "-", "-", "-"
     else:
         city, region, country = response_json.get("city"), response_json.get("region"), response_json.get("country_name")
-    location_data = '"' + '" "'.join([city, region, country]) + '"'
+    location_data = '|' + '| |'.join([city, region, country]) + '|'
     return (key, b" ".join([location_data.encode(), log.encode()]))
 ```
 
-#### Part 2 - Accumulate Logs
+#### Part 3 - Accumulate Logs
 
-This function will be called inside of a stateful operator that will accumulate the logs across the size of the batch specified in the `kafkaInputConfig`
+This step in the dataflow is unique that it will use a stateful operator, [`reduce_window`](https://docs.bytewax.io/apidocs/bytewax.dataflow#bytewax.dataflow.Dataflow.reduce_window). That will aggregate values for a key based on a function given. `reduce_window` requires a clock configuration and a window configuration that will be used as the basis for aggregation.  
+
+```python
+cc = SystemClockConfig()
+wc = TumblingWindowConfig(length=datetime.timedelta(seconds=5))
+
+flow.reduce_window("accumulate_logs", cc, wc, accumulate_logs)
+```
+
+The reduce_window operator will receive a state step id (used for recovery), a clock config, a window config and a function that will be called with each new datum. The data should be in the shape (key, value) where the key is used to route data to the correct worker. For our data flow that would look like, `('', log)`. The code for accumulate_logs is below. We are simply concatenating byte strings with a newline separation. This will allow us to parse them with the helpful pyarrow csv_reader.
 
 ```python
 def accumulate_logs(logs, log):
@@ -214,13 +193,17 @@ def accumulate_logs(logs, log):
 
 #### Part 3 - Parse Logs
 
-Here we use the pyarrow csv_reader to parse out the line separated, space delimited byte string file object into a pyarrow table with the columns listed below. The table object returned is what we will use to write the files into parquet files with the correct metadata and partitioning.
+Here we use the pyarrow csv_reader to parse out the line separated, space delimited, byte string file object into a pyarrow table with the columns listed below. The table object returned is what we will use to write the files into parquet files with the correct metadata and partitioning.
 
 ```python
 def parse_logs(epoch__logs):
+    '''
+    Function that uses pyarrow to parse logs 
+    and create a datetime partitioned pyarrow table
+    '''
     epoch, logs = epoch__logs
     logs = BytesIO(logs)
-    parse_options = csv.ParseOptions(delimiter=" ")
+    parse_options = csv.ParseOptions(delimiter=" ", invalid_row_handler=skip_log, quote_char="|")
     read_options = csv.ReadOptions(
         column_names=["city", "region", "country", "ip", "1-", "2-", "event_time", "request_url",
         "status_code", "3-", "request_referrer", "user_agent", "4-"])
@@ -237,10 +220,18 @@ Now that we have returned the output table we can capture the data to a sink.
 
 ### Output - Capturing the Data
 
-In the final step, capturing the output in a sink, we are using pyarrow once more. In this example, we are using a filestore, but you could easily modify this to use the other available storage options from pyarrow (S3 and Azure Blob at this time).
+In the final step `flow.capture(ManualOutputConfig(output_builder))`, we are capturing the output using a custom output builder in the [`ManualOutputConfig`](https://docs.bytewax.io/apidocs/bytewax.outputs#bytewax.outputs.ManualOutputConfig). In our output builder we are using pyarrow once more. In this example, we are using a filestore, but you could easily modify this to use the other available storage options from pyarrow (S3 and Azure Blob at this time). The output builder should be something parallelizable if you are looking to scale up the number of workers/processes. Whichever client you use should be able to make concurrent writes in this case.
 
 ```python
+def output_builder(worker_index, worker_count):
+    return write_to_fs
+
+
 def write_to_fs(epoch__table):
+    '''
+    create a filesystem object with pyarrow fs
+    write pyarrow table as parquet to filesystem
+    '''
     epoch, table = epoch__table
     local = fs.LocalFileSystem()
     ds.write_dataset(
@@ -253,6 +244,66 @@ def write_to_fs(epoch__table):
         basename_template = "part-{i}-" + uuid.uuid4().hex + ".parquet"
     )
 ```
+
+## Running the dataflow and Ingesting Data
+
+_Before running the code below, you may need to install some dependencies from the requirements.txt file and restart the kernel if you have not already done so._
+
+```python
+pip install -r requirements.txt
+```
+
+Once your environment is configure, let's create the Redpanda Topic that we will be listening to with out dataflow by running the code in the cell below.
+
+
+```python
+from kafka import KafkaProducer
+from kafka.admin import KafkaAdminClient, NewTopic
+from kafka.errors import KafkaError
+from time import sleep
+
+input_topic_name = "requests"
+localhost_bootstrap_server = "localhost:9092"
+producer = KafkaProducer(bootstrap_servers=[localhost_bootstrap_server])
+admin = KafkaAdminClient(bootstrap_servers=[localhost_bootstrap_server])
+
+# Create input topic
+try:
+    input_topic = NewTopic(input_topic_name, num_partitions=1, replication_factor=1)
+    admin.create_topics([input_topic])
+    print(f"input topic {input_topic_name} created successfully")
+except:
+    print(f"Topic {input_topic_name} already exists")
+```
+
+    input topic requests created successfully
+
+
+Now we can run the dataflow in a terminal on your local machine. Because we have set `tail = False` in our dataflow, this may exit before you get a chance to run the cell below. In that case, just start the cell below and then run the dataflow.
+
+```bash
+python dataflow.py
+```
+
+You may see some messages from our dataflow waiting for new data in the Redpanda topic.
+
+Now we can simulate logging some data for downstream consumption. If you've cloned this notebook locally, you can run the cell below directly from the notebook. 
+
+
+
+```python
+# Add data to input topic
+try:
+    for line in open("input_data/first1000.log"):
+        producer.send(input_topic_name, value=line.encode())
+        sleep(0.05)
+    print(f"input topic {input_topic_name} populated successfully")
+except KafkaError:
+    print("An error occurred")
+```
+
+    input topic requests populated successfully
+
 
 ## Analysis and Insights
 
@@ -291,7 +342,7 @@ location_data.plot.bar()
 
 
     
-![png](lightweight_data_stack_files/lightweight_data_stack_13_1.png)
+![png](lightweight_data_stack_files/lightweight_data_stack_19_1.png)
     
 
 
@@ -319,11 +370,11 @@ status_codes.plot.bar()
 
 
     
-![png](lightweight_data_stack_files/lightweight_data_stack_15_1.png)
+![png](lightweight_data_stack_files/lightweight_data_stack_21_1.png)
     
 
 
-And then isolate the ip address for each of the status codes that was not a 200 request to see if there are an common offenders.
+And then isolate the ip address for each of the status codes that was not a 200 request to see if there are a common offenders.
 
 
 ```python
@@ -370,138 +421,24 @@ non_200
       <th>0</th>
       <td>404</td>
       <td>66.249.66.194</td>
-      <td>13</td>
+      <td>1</td>
     </tr>
     <tr>
       <th>1</th>
-      <td>302</td>
-      <td>66.249.66.194</td>
-      <td>11</td>
+      <td>404</td>
+      <td>5.211.97.39</td>
+      <td>1</td>
     </tr>
     <tr>
       <th>2</th>
-      <td>404</td>
-      <td>5.211.97.39</td>
-      <td>11</td>
-    </tr>
-    <tr>
-      <th>3</th>
-      <td>301</td>
-      <td>5.160.157.20</td>
-      <td>7</td>
-    </tr>
-    <tr>
-      <th>4</th>
-      <td>304</td>
-      <td>5.209.127.187</td>
-      <td>7</td>
-    </tr>
-    <tr>
-      <th>5</th>
-      <td>302</td>
-      <td>17.58.102.43</td>
-      <td>3</td>
-    </tr>
-    <tr>
-      <th>6</th>
-      <td>301</td>
-      <td>17.58.102.43</td>
-      <td>2</td>
-    </tr>
-    <tr>
-      <th>7</th>
-      <td>301</td>
-      <td>66.249.66.195</td>
-      <td>1</td>
-    </tr>
-    <tr>
-      <th>8</th>
-      <td>302</td>
-      <td>54.36.148.161</td>
-      <td>1</td>
-    </tr>
-    <tr>
-      <th>9</th>
-      <td>302</td>
-      <td>54.36.149.11</td>
-      <td>1</td>
-    </tr>
-    <tr>
-      <th>10</th>
-      <td>404</td>
-      <td>207.46.13.136</td>
-      <td>1</td>
-    </tr>
-    <tr>
-      <th>11</th>
       <td>302</td>
       <td>54.36.148.87</td>
       <td>1</td>
     </tr>
     <tr>
-      <th>12</th>
+      <th>3</th>
       <td>404</td>
-      <td>207.46.13.104</td>
-      <td>1</td>
-    </tr>
-    <tr>
-      <th>13</th>
-      <td>301</td>
-      <td>207.46.13.104</td>
-      <td>1</td>
-    </tr>
-    <tr>
-      <th>14</th>
-      <td>301</td>
-      <td>52.7.238.253</td>
-      <td>1</td>
-    </tr>
-    <tr>
-      <th>15</th>
-      <td>302</td>
-      <td>54.36.148.28</td>
-      <td>1</td>
-    </tr>
-    <tr>
-      <th>16</th>
-      <td>302</td>
-      <td>66.249.83.1</td>
-      <td>1</td>
-    </tr>
-    <tr>
-      <th>17</th>
-      <td>302</td>
-      <td>54.36.149.58</td>
-      <td>1</td>
-    </tr>
-    <tr>
-      <th>18</th>
-      <td>301</td>
-      <td>216.244.66.248</td>
-      <td>1</td>
-    </tr>
-    <tr>
-      <th>19</th>
-      <td>404</td>
-      <td>66.249.66.91</td>
-      <td>1</td>
-    </tr>
-    <tr>
-      <th>20</th>
-      <td>302</td>
-      <td>54.36.148.185</td>
-      <td>1</td>
-    </tr>
-    <tr>
-      <th>21</th>
-      <td>302</td>
-      <td>54.36.148.72</td>
-      <td>1</td>
-    </tr>
-    <tr>
-      <th>22</th>
-      <td>302</td>
-      <td>5.209.200.218</td>
+      <td>207.46.13.136</td>
       <td>1</td>
     </tr>
   </tbody>
@@ -559,62 +496,46 @@ non_200_raw
   <tbody>
     <tr>
       <th>0</th>
-      <td>-</td>
-      <td>-</td>
-      <td>-</td>
-      <td>17.58.102.43</td>
-      <td>-</td>
-      <td>-</td>
-      <td>22/Jan/2019:03:58:06 +0330</td>
-      <td>GET /filter/b571%2Cb288%2Cb514%2Cb19%2Cb519%2C...</td>
-      <td>301</td>
-      <td>178</td>
-      <td>-</td>
-      <td>Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1...</td>
-      <td>-</td>
-    </tr>
-    <tr>
-      <th>1</th>
       <td>Ashburn</td>
       <td>Virginia</td>
       <td>United States</td>
       <td>66.249.66.194</td>
       <td>-</td>
       <td>-</td>
-      <td>22/Jan/2019:03:58:09 +0330</td>
-      <td>GET /m/product/7524?model=9206 HTTP/1.1</td>
-      <td>302</td>
-      <td>0</td>
+      <td>22/Jan/2019:03:56:23 +0330</td>
+      <td>GET /product/81900 HTTP/1.1</td>
+      <td>404</td>
+      <td>32278</td>
       <td>-</td>
       <td>Mozilla/5.0 (compatible; Googlebot/2.1; +http:...</td>
       <td>-</td>
     </tr>
     <tr>
-      <th>2</th>
+      <th>1</th>
       <td>Tehran</td>
       <td>Tehran</td>
       <td>Iran</td>
       <td>5.211.97.39</td>
       <td>-</td>
       <td>-</td>
-      <td>22/Jan/2019:03:58:19 +0330</td>
+      <td>22/Jan/2019:03:56:31 +0330</td>
       <td>HEAD /amp_preconnect_polyfill_404_or_other_err...</td>
       <td>404</td>
       <td>0</td>
-      <td>https://www.zanbil.ir/m/browse/meat-grinder/%D...</td>
+      <td>https://www.zanbil.ir/m/browse/cooking-tools/%...</td>
       <td>Mozilla/5.0 (iPhone; CPU iPhone OS 10_3_2 like...</td>
       <td>-</td>
     </tr>
     <tr>
-      <th>3</th>
+      <th>2</th>
       <td>-</td>
       <td>-</td>
       <td>-</td>
-      <td>54.36.149.11</td>
+      <td>54.36.148.87</td>
       <td>-</td>
       <td>-</td>
-      <td>22/Jan/2019:03:58:40 +0330</td>
-      <td>GET /filter/588%7C3%20%D9%84%DB%8C%D8%AA%D8%B1...</td>
+      <td>22/Jan/2019:03:56:34 +0330</td>
+      <td>GET /filter/p65%2Cv1%7C%D9%86%D9%82%D8%B1%D9%8...</td>
       <td>302</td>
       <td>0</td>
       <td>-</td>
@@ -622,120 +543,23 @@ non_200_raw
       <td>-</td>
     </tr>
     <tr>
-      <th>4</th>
+      <th>3</th>
+      <td>Quincy</td>
+      <td>Washington</td>
+      <td>United States</td>
+      <td>207.46.13.136</td>
       <td>-</td>
       <td>-</td>
-      <td>-</td>
-      <td>5.160.157.20</td>
-      <td>-</td>
-      <td>-</td>
-      <td>22/Jan/2019:03:58:50 +0330</td>
-      <td>GET /filter?f=p12129&amp;page=19 HTTP/1.1</td>
-      <td>301</td>
-      <td>178</td>
-      <td>-</td>
-      <td>Mozilla/5.0 (Windows NT 5.1; rv:8.0) Gecko/201...</td>
-      <td>-</td>
-    </tr>
-    <tr>
-      <th>...</th>
-      <td>...</td>
-      <td>...</td>
-      <td>...</td>
-      <td>...</td>
-      <td>...</td>
-      <td>...</td>
-      <td>...</td>
-      <td>...</td>
-      <td>...</td>
-      <td>...</td>
-      <td>...</td>
-      <td>...</td>
-      <td>...</td>
-    </tr>
-    <tr>
-      <th>65</th>
-      <td>-</td>
-      <td>-</td>
-      <td>-</td>
-      <td>207.46.13.104</td>
-      <td>-</td>
-      <td>-</td>
-      <td>22/Jan/2019:03:56:46 +0330</td>
-      <td>GET /browse/flute-keys/www.zanbil.ir HTTP/1.1</td>
+      <td>22/Jan/2019:03:56:19 +0330</td>
+      <td>GET /product/14926 HTTP/1.1</td>
       <td>404</td>
-      <td>33605</td>
+      <td>33617</td>
       <td>-</td>
       <td>Mozilla/5.0 (compatible; bingbot/2.0; +http://...</td>
       <td>-</td>
     </tr>
-    <tr>
-      <th>66</th>
-      <td>Karaj</td>
-      <td>Alborz Province</td>
-      <td>Iran</td>
-      <td>5.160.157.20</td>
-      <td>-</td>
-      <td>-</td>
-      <td>22/Jan/2019:03:56:49 +0330</td>
-      <td>GET /filter?f=p12129&amp;page=21 HTTP/1.1</td>
-      <td>301</td>
-      <td>178</td>
-      <td>-</td>
-      <td>Mozilla/5.0 (Windows NT 5.1; rv:8.0) Gecko/201...</td>
-      <td>-</td>
-    </tr>
-    <tr>
-      <th>67</th>
-      <td>Tehran</td>
-      <td>Tehran</td>
-      <td>Iran</td>
-      <td>5.211.97.39</td>
-      <td>-</td>
-      <td>-</td>
-      <td>22/Jan/2019:03:57:16 +0330</td>
-      <td>HEAD /amp_preconnect_polyfill_404_or_other_err...</td>
-      <td>404</td>
-      <td>0</td>
-      <td>https://www.zanbil.ir/m/filter/p25%2Cb103%2Cb50</td>
-      <td>Mozilla/5.0 (iPhone; CPU iPhone OS 10_3_2 like...</td>
-      <td>-</td>
-    </tr>
-    <tr>
-      <th>68</th>
-      <td>-</td>
-      <td>-</td>
-      <td>-</td>
-      <td>66.249.66.194</td>
-      <td>-</td>
-      <td>-</td>
-      <td>22/Jan/2019:03:57:44 +0330</td>
-      <td>GET /m/product/25816/53071/%D8%B3%D8%A7%DA%A9%...</td>
-      <td>302</td>
-      <td>0</td>
-      <td>-</td>
-      <td>Mozilla/5.0 (compatible; Googlebot/2.1; +http:...</td>
-      <td>-</td>
-    </tr>
-    <tr>
-      <th>69</th>
-      <td>-</td>
-      <td>-</td>
-      <td>-</td>
-      <td>66.249.66.194</td>
-      <td>-</td>
-      <td>-</td>
-      <td>22/Jan/2019:03:57:45 +0330</td>
-      <td>GET /product/25816/53071/%D8%B3%D8%A7%DA%A9%D8...</td>
-      <td>404</td>
-      <td>33805</td>
-      <td>-</td>
-      <td>Mozilla/5.0 (compatible; Googlebot/2.1; +http:...</td>
-      <td>-</td>
-    </tr>
   </tbody>
 </table>
-<p>70 rows × 13 columns</p>
 </div>
 
 
@@ -755,28 +579,9 @@ for ip in non_200['ip'].to_list():
 ```
 
     GOOGLE, US
-    GOOGLE, US
     MCCI-AS, IR
-    AZMA-AS, IR
-    MCCI-AS, IR
-    APPLE-ENGINEERING, US
-    APPLE-ENGINEERING, US
-    GOOGLE, US
-    OVH, FR
     OVH, FR
     MICROSOFT-CORP-MSN-AS-BLOCK, US
-    OVH, FR
-    MICROSOFT-CORP-MSN-AS-BLOCK, US
-    MICROSOFT-CORP-MSN-AS-BLOCK, US
-    AMAZON-AES, US
-    OVH, FR
-    GOOGLE, US
-    OVH, FR
-    WOW, US
-    GOOGLE, US
-    OVH, FR
-    OVH, FR
-    MCCI-AS, IR
 
 
 We won't dive any deeper than this at the moment as I think this demonstrates what you need to get started answering your relevant business questions with the Lightweight Data Stack.
