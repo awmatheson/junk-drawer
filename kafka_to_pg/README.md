@@ -2,11 +2,11 @@
 
 This requires both Kafka or Redpanda as well as Postgres before getting started you will need both of these.
 
-Step 1:
+### Step 1:
 
 Run Kafka
 
-Step 2: 
+### Step 2: 
 
 Install and start Postgres and then run the following commands
 
@@ -20,7 +20,7 @@ data JSON;
 );
 ```
 
-Step 3:
+### Step 3:
 
 Load some data in the topic
 
@@ -28,7 +28,7 @@ Load some data in the topic
 python fake_events.py
 ```
 
-Step 4:
+### Step 4:
 
 Run the dataflow
 
