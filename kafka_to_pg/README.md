@@ -22,9 +22,10 @@ data JSON;
 
 ### Step 3:
 
-Load some data in the topic
+install the requirements and load some data in the topic
 
 ```sh
+pip install -r requirements.txt
 python fake_events.py
 ```
 
