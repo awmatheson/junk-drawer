@@ -14,7 +14,7 @@ from bytewax.outputs import KafkaOutputConfig
 from kafka.admin import KafkaAdminClient, NewTopic
 
 
-all_files = os.listdir("./data")    
+all_files = os.listdir("./test")    
 CSV_FILES = list(filter(lambda f: f.endswith('.csv') and 'Secondary' not in f, all_files))
 
 def process_files(workers_files, state):
@@ -23,7 +23,7 @@ def process_files(workers_files, state):
                    file_name)
         sensor_key = ", ".join([match[1],match[4]])
         print(sensor_key)
-        with open(f"data/{file_name}") as lines:
+        with open(f"test/{file_name}") as lines:
             state = state or 0
             for i, line in enumerate(lines):
                 if i < 1:
