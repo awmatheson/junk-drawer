@@ -15,7 +15,7 @@ from kafka.admin import KafkaAdminClient, NewTopic
 
 
 all_files = os.listdir("./test")    
-CSV_FILES = list(filter(lambda f: f.endswith('.csv') and 'Secondary' not in f, all_files))
+CSV_FILES = list(filter(lambda f: f.endswith('.csv') and 'test' not in f, all_files))
 
 def process_files(workers_files, state):
     for file_name in workers_files:
@@ -30,12 +30,12 @@ def process_files(workers_files, state):
                     continue
                 state += 1
                 line = line.strip().rstrip(',')
-                sleep(0.01)
+                sleep(0.001)
                 yield (state, (str(sensor_key), line.split(',')))
 
 def input_builder(worker_index, worker_count, resume_state):
     state = resume_state or None
-    workers_files = distribute(CSV_FILES[:1], worker_index, worker_count)
+    workers_files = distribute(CSV_FILES, worker_index, worker_count)
     return process_files(workers_files, state)
 
 def serialize(line):

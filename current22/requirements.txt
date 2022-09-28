@@ -1,3 +1,5 @@
 kafka-python
 bytewax
 river
+geopy==2.2.0
+scipy==1.9.1
