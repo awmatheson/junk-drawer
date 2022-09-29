@@ -39,7 +39,7 @@ class AnomalyDetector:
                                                 n_trees=n_trees,
                                                 height=height,
                                                 window_size=window_size,
-                                                limits={'x': (0.0, 2000)},
+                                                limits={'x': (0.0, 1200)},
                                                 seed=seed
                                                 )
     
@@ -53,7 +53,7 @@ flow.stateful_map(
     builder = lambda: AnomalyDetector(n_trees=4, height=3, window_size=50, seed=11),
     mapper = AnomalyDetector.update,
 )
-flow.filter(lambda x: x[1]['score']>0.7)
+flow.filter(lambda x: x[1]['score']>0.6)
 flow.filter(lambda x: float(x[1]['PM2.5_CF1_ug/m3'])>50)
 
 def groupby_region(loc__data):
@@ -76,7 +76,7 @@ flow.map(groupby_region)
 def get_event_time(event):
     return datetime.strptime(event["created_at"], "%Y-%m-%d %H:%M:%S %Z").replace(tzinfo=timezone.utc)
 
-cc = EventClockConfig(get_event_time, wait_for_system_duration=timedelta(minutes=10))
+cc = EventClockConfig(get_event_time, wait_for_system_duration=timedelta(hours=720))
 start_at = datetime.strptime("2022-07-01 00:00:00 UTC", "%Y-%m-%d %H:%M:%S %Z").replace(tzinfo=timezone.utc)
 wc = TumblingWindowConfig(start_at=start_at, length=timedelta(hours=6))
 
@@ -120,7 +120,7 @@ def convert(key__anomalies):
                 malfunction = True
 
     return {
-            "sensors": set(anomalies.sensors),
+            "sensors": sensors,
             "count_sensors": count_sensors,
             "count_anomalies": count_anomalies,
             "anomalies": anomalies.values,

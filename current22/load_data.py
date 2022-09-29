@@ -30,7 +30,7 @@ def process_files(workers_files, state):
                     continue
                 state += 1
                 line = line.strip().rstrip(',')
-                sleep(0.001)
+                sleep(0.01)
                 yield (state, (str(sensor_key), line.split(',')))
 
 def input_builder(worker_index, worker_count, resume_state):
