@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 import time
 import sys
+import os
 
 import requests
 
@@ -17,7 +18,7 @@ from scipy.stats import variation
 
 from river import anomaly
 
-WEBHOOK_URL = "https://hooks.slack.com/services/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"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 def deserialize(key_bytes__payload_bytes):
     key_bytes, payload_bytes = key_bytes__payload_bytes
