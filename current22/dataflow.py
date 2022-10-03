@@ -2,6 +2,9 @@ import json
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 import time
+import sys
+
+import requests
 
 from geopy.geocoders import Nominatim
 from bytewax.dataflow import Dataflow
@@ -13,6 +16,8 @@ from bytewax.execution import cluster_main
 from scipy.stats import variation
 
 from river import anomaly
+
+WEBHOOK_URL = "https://hooks.slack.com/services/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"
 
 def deserialize(key_bytes__payload_bytes):
     key_bytes, payload_bytes = key_bytes__payload_bytes
@@ -39,6 +44,9 @@ class AnomalyDetector:
                                                 n_trees=n_trees,
                                                 height=height,
                                                 window_size=window_size,
+                                                # we are using 1200 as the max for this
+                                                # dataset since we know in advanced it
+                                                # is the highest
                                                 limits={'x': (0.0, 1200)},
                                                 seed=seed
                                                 )
@@ -76,7 +84,12 @@ flow.map(groupby_region)
 def get_event_time(event):
     return datetime.strptime(event["created_at"], "%Y-%m-%d %H:%M:%S %Z").replace(tzinfo=timezone.utc)
 
-cc = EventClockConfig(get_event_time, wait_for_system_duration=timedelta(hours=720))
+# We need to specify a wait time that is as long as the difference between
+# the oldest (2022-07-01) and the newest (2022-09-18) to ensure out of order
+# events are handled correctly
+cc = EventClockConfig(get_event_time, wait_for_system_duration=timedelta(days=100))
+
+# Manually set the start time for this dataflow, this is known for this dataset 
 start_at = datetime.strptime("2022-07-01 00:00:00 UTC", "%Y-%m-%d %H:%M:%S %Z").replace(tzinfo=timezone.utc)
 wc = TumblingWindowConfig(start_at=start_at, length=timedelta(hours=6))
 
@@ -94,11 +107,9 @@ class Anomalies:
 
         return self
 
-    def __str__(self):
-        return f"{self.times}, {self.sensors}, {self.values}"
-
 flow.fold_window("count_sensors", cc, wc, Anomalies, Anomalies.update)
 
+# Calculate some statistics and use rules to separate smoke events from malfunctions
 def convert(key__anomalies):
     key, anomalies = key__anomalies
     
@@ -115,11 +126,13 @@ def convert(key__anomalies):
         if count_anomalies < 2:
             malfunction = True
         else:
+            # simplification, if there is wild variance in the data it is 
+            # possibly a false positive
             anom_variance = variation(anomalies.values)
             if anom_variance > 0.3:
                 malfunction = True
 
-    return {
+    return (key, {
             "sensors": sensors,
             "count_sensors": count_sensors,
             "count_anomalies": count_anomalies,
@@ -128,16 +141,49 @@ def convert(key__anomalies):
             "max_pm25": max_pm25,
             "variance": anom_variance,
             "malfunction": malfunction
-            }
+            })
 
 flow.map(convert)
+
+def output_builder(worker_index, worker_count):
+    
+    def send_to_slack(key__sensor_data):
+        location, sensor_data = key__sensor_data
+        if sensor_data['malfunction']:
+            message = f'''In {location} was a malfunctioning sensor at location
+                            {sensor_data['sensors']} at {sensor_data['min_event']}'''
+            title = (f"Malfunctioning Sensor")
+        else:
+            message = f'''In {location} there is a suspected smoke event from a fire reported 
+                        by sensors at {sensor_data['sensors']} at {sensor_data['min_event']}'''
+            title = (f"Suspected Smoke Event")
+        slack_data = {
+            "username": "Air Quality Bot",
+            "icon_emoji": ":satellite:",
+            "channel" : "#hacking-on-bytewax",
+            "attachments": [
+                {
+                    "color": "#9733EE",
+                    "fields": [
+                        {
+                            "title": title,
+                            "value": message,
+                            "short": "false",
+                        }
+                    ]
+                }
+            ]
+        }
+        byte_length = str(sys.getsizeof(slack_data))
+        headers = {'Content-Type': "application/json", 'Content-Length': byte_length}
+        response = requests.post(WEBHOOK_URL, data=json.dumps(slack_data), headers=headers)
+        if response.status_code != 200:
+            raise Exception(response.status_code, response.text)
+
+    return send_to_slack
+
 flow.capture(
-    StdOutputConfig()
-    # KafkaOutputConfig(
-    #     brokers=["localhost:9092"],
-    #     topic="sensor_anomalies",
-    # )
-)
+    ManualOutputConfig(output_builder))
 
 if __name__ == "__main__":
     addresses = [
